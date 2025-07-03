@@ -129,7 +129,7 @@ def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
 
     print(f"\nTotal requests: {len(arrivals)}")
     print(f"Successful (1.5s–60s): {len(successful_requests)}")
-    print(f"Dropped (too fast or slow): {dropped_requests}")
+    print(f"Dropped: {dropped_requests}")
 
     end_time = time.time()  # End timer
     total_time = end_time - start_time
