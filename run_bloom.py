@@ -9,9 +9,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, GPTQConfig
 import asyncio
 
 def main():
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    print(f"Running on: {device}")
-
+    device = "cuda:0"
     quantized_model_path = str(Path("./quantized_bloom_3b").resolve())
     # quantized_model_path = str(Path("./quantized_bloom_7b1").resolve())
     # quantized_model_path = str(Path("./quantized_opt_13b").resolve())

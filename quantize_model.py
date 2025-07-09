@@ -1,10 +1,10 @@
 import torch
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, GPTQConfig
+torch._dynamo.disable()
 
 def quantize_model(model_id, save_dir, bits=4, group_size=128):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    
+    device = "cuda:0"
     print(f"Loading tokenizer for GPTQ")
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     
@@ -16,7 +16,7 @@ def quantize_model(model_id, save_dir, bits=4, group_size=128):
     for i in range(128):
         prompt = orca_data[i]["question"]
         inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=128, padding="max_length")
-        inputs = {k: v.to(device) for k, v in inputs.items()}
+        inputs = {k: v for k, v in inputs.items()}
         examples.append(inputs)
     
     print(f"Loading model: {model_id}")
@@ -26,7 +26,7 @@ def quantize_model(model_id, save_dir, bits=4, group_size=128):
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
         torch_dtype=torch.float16,
-        device_map={"": 0},
+        device_map={"":0},
         trust_remote_code=True,
         quantization_config=gptq_config
     )
