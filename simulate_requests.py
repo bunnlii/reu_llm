@@ -1,9 +1,9 @@
 import numpy as np
 import random
 import time
-import concurrent.futures
-from transformers import AutoTokenizer
-from transformers import AutoModelForCausalLM, GPTQConfig
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from transformers import AutoTokenizer, AutoModelForCausalLM, GPTQConfig
 from datasets import load_dataset
 from simulation_env import create_nodes
 
@@ -43,7 +43,7 @@ def estimate_latency(node, input_len, gen_len):
     tx_power_watt = 10 ** ((node.tx_power_ul_dbm - 30) / 10)
     snr = tx_power_watt * pathloss / (N0_watt * node.bandwidth_ul_hz)
     rate_bps = node.bandwidth_ul_hz * np.log2(1 + snr)
-    
+
     upload_size = input_len * 2
     download_size = gen_len * 2
 
@@ -56,74 +56,81 @@ def estimate_latency(node, input_len, gen_len):
 
     return upload_time, inference_time, download_time
 
-def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
-    start_time = time.time()  # Start timer
-    
+async def run_request(model, tokenizer, arrival_time, device, nodes, executor):
+    input_len = np.random.choice(prompt_lengths)
+    gen_len = np.random.choice(prompt_lengths)
+    required_acc = np.random.uniform(0, 1)
+
+    prompt = get_prompt()
+    raw_inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=input_len)
+    if 'attention_mask' in raw_inputs:
+        raw_inputs['attention_mask'] = raw_inputs['attention_mask'].float()
+
+    node = random.choice(nodes)
+    upload_time, inference_time, download_time = estimate_latency(node, input_len, gen_len)
+    simulated_latency = upload_time + inference_time + download_time
+
+    loop = asyncio.get_event_loop()
+    try:
+        output = await loop.run_in_executor(
+            executor,
+            lambda: model.generate(
+                **{k: v.to(device) for k, v in raw_inputs.items()},
+                max_new_tokens=gen_len,
+                do_sample=True,
+                temperature=0.7,
+                top_k=50,
+                top_p=0.9,
+                repetition_penalty=1.2,
+                pad_token_id=tokenizer.eos_token_id
+            )
+        )
+    except Exception as e:
+        print(f"Request failed: {e}")
+        return None
+
+    if 1.5 <= simulated_latency <= 60:
+        generated_text = tokenizer.decode(output[0], skip_special_tokens=True)
+        print("Successful Request")
+        print(f"Node: {node.name}")
+        print(f"Prompt: {prompt}")
+        print(f"Answer: {generated_text}")
+        print(f"Latency: {simulated_latency:.2f} seconds")
+        print(f"Required Accuracy: {required_acc:.2f}")
+
+        return {
+            "arrival_time": arrival_time,
+            "input_length": input_len,
+            "generation_length": gen_len,
+            "required_accuracy": required_acc,
+            "prompt_tokens": raw_inputs["input_ids"].to(device),
+            "generated_text": generated_text,
+            "latency": simulated_latency,
+            "node": node.name
+        }
+    else:
+        return None
+
+async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
+    start_time = time.time()
     arrivals = simulate_poisson_arrivals(rate_lambda, duration_sec)
     device = next(model.parameters()).device
+    edge_server, uav, vehicle = await create_nodes()
+    nodes = [edge_server, uav, vehicle]
+
     successful_requests = []
     dropped_requests = 0
 
-    edge_server, uav, vehicle = create_nodes()
-    nodes = [edge_server, uav, vehicle]
-    
-    for arrival_time in arrivals:
-        input_len = np.random.choice(prompt_lengths)
-        gen_len = np.random.choice(prompt_lengths)
-        required_acc = np.random.uniform(0, 1)
+    with ThreadPoolExecutor() as executor:
+        tasks = [
+            run_request(model, tokenizer, arrival, device, nodes, executor)
+            for arrival in arrivals
+        ]
+        results = await asyncio.gather(*tasks)
 
-        prompt = get_prompt()
-        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=input_len)
-
-        if 'attention_mask' in inputs:
-            inputs['attention_mask'] = inputs['attention_mask'].float()
-
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-
-        node = random.choice(nodes)
-        upload_time, inference_time, download_time = estimate_latency(node, input_len, gen_len)
-        network_latency = upload_time + download_time
-        simulated_latency = network_latency + inference_time
-
-        output = None
-        try:
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    model.generate,
-                    **inputs,
-                    max_new_tokens=gen_len,
-                    do_sample=True,
-                    temperature=0.7,
-                    top_k=50,
-                    top_p=0.9,
-                    repetition_penalty=1.2,
-                    pad_token_id=tokenizer.eos_token_id
-                )
-                output = future.result(timeout=60)
-        except concurrent.futures.TimeoutError:
-            print(f"\nRequest timed out (>{60} seconds).")
-            dropped_requests += 1
-            continue
-            
-        if 1.5 <= simulated_latency <= 60:
-            generated_text = tokenizer.decode(output[0], skip_special_tokens=True)
-            print("Successful Request")
-            print(f"Node: {node.name}")
-            print(f"Prompt: {prompt}")
-            print(f"Answer: {generated_text}")
-            print(f"Latency: {simulated_latency:.2f} seconds (Upload: {upload_time:.3f}s, Inference: {inference_time:.3f}s, Download: {download_time:.3f}s)")
-            print(f"Required Accuracy: {required_acc:.2f}")
-
-            successful_requests.append({
-                "arrival_time": arrival_time,
-                "input_length": input_len,
-                "generation_length": gen_len,
-                "required_accuracy": required_acc,
-                "prompt_tokens": inputs["input_ids"],
-                "generated_text": generated_text,
-                "latency": simulated_latency,
-                "node": node.name
-            })
+    for result in results:
+        if result is not None:
+            successful_requests.append(result)
         else:
             dropped_requests += 1
 
@@ -131,8 +138,10 @@ def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
     print(f"Successful (1.5s–60s): {len(successful_requests)}")
     print(f"Dropped: {dropped_requests}")
 
-    end_time = time.time()  # End timer
+    end_time = time.time()
     total_time = end_time - start_time
     print(f"\nTotal simulation time: {total_time:.2f} seconds")
+    print(f"Total simulation time: {time.time() - start_time:.2f} seconds")
 
     return successful_requests
+

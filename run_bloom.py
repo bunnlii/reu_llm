@@ -1,11 +1,15 @@
 import os
 import torch
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
+
 from pathlib import Path
 from simulate_requests import simulate_requests
 from transformers import AutoModelForCausalLM, AutoTokenizer, GPTQConfig
+import asyncio
 
 def main():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"Running on: {device}")
 
     quantized_model_path = str(Path("./quantized_bloom_3b").resolve())
@@ -21,14 +25,13 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         quantized_model_path,
         torch_dtype=torch.float16,
-        device_map="auto",
         trust_remote_code=True,
         quantization_config=gptq_config,
     )
     model.to(device)
 
     print("Simulating requests")
-    requests = simulate_requests(rate_lambda=50, duration_sec=10, model=model, tokenizer=tokenizer)
+    requests = asyncio.run(simulate_requests(rate_lambda=50, duration_sec=10, model=model, tokenizer=tokenizer))
 
     for i, req in enumerate(requests):
         print(f"Request #{i+1} - Arrival time: {req['arrival_time']:.2f}s, Input length: {req['input_length']}, Required accuracy: {req['required_accuracy']:.2f}")
@@ -36,3 +39,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

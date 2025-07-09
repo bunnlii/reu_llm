@@ -26,7 +26,7 @@ def quantize_model(model_id, save_dir, bits=4, group_size=128):
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
         torch_dtype=torch.float16,
-        device_map="auto",
+        device_map={"": 0},
         trust_remote_code=True,
         quantization_config=gptq_config
     )
@@ -45,3 +45,4 @@ if __name__ == "__main__":
 
     # OPT-13B
     # quantize_model("facebook/opt-13b", "./quantized_opt_13b", bits=8, group_size=128)
+
