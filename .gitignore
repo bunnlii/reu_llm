@@ -1,0 +1,20 @@
+# Ignore models and data
+quantized_bloom_3b/
+quantized_bloom_7b1/
+quantized_opt_13b/
+
+# Ignore Python cache and virtual env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+bin/
+lib/
+lib64/
+share/
+pyvenv.cfg
+*.safetensors
+
+# Ignore any other large files
+*.pt
+*.bin
