@@ -1,5 +1,0 @@
-# Ignore everything
-*
-
-# But NOT these specific .py files
-!*.py
