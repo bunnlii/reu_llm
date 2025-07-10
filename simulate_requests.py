@@ -1,8 +1,12 @@
 import numpy as np
 import random
 import time
+import torch
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+import matplotlib.pyplot as plt
+
+from collections import Counter
+from collections import defaultdict
 from transformers import AutoTokenizer, AutoModelForCausalLM, GPTQConfig
 from datasets import load_dataset
 from simulation_env import create_nodes
@@ -12,7 +16,7 @@ orca_data = load_dataset("Open-Orca/OpenOrca", split="train")
 def get_prompt():
     return orca_data[random.randint(0, len(orca_data) - 1)]["question"]
 
-prompt_lengths = [64]
+prompt_lengths = [128, 256, 512]
 
 def simulate_poisson_arrivals(rate_lambda, duration_sec):
     arrivals = []
@@ -56,60 +60,73 @@ def estimate_latency(node, input_len, gen_len):
 
     return upload_time, inference_time, download_time
 
-async def run_request(model, tokenizer, arrival_time, device, nodes, executor):
-    input_len = np.random.choice(prompt_lengths)
-    gen_len = np.random.choice(prompt_lengths)
-    required_acc = np.random.uniform(0, 1)
+async def run_request(model, tokenizer, arrival_times, prompts, input_lens, gen_lens, required_accs, device, nodes):
+    # Tokenize the entire batch of prompts together
+    raw_inputs = tokenizer(
+        prompts,
+        return_tensors="pt",
+        truncation=True,
+        padding=True,
+        max_length=max(input_lens),
+    )
+    raw_inputs = {k: v.to(device) for k, v in raw_inputs.items()}
 
-    prompt = get_prompt()
-    raw_inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=input_len)
-    if 'attention_mask' in raw_inputs:
-        raw_inputs['attention_mask'] = raw_inputs['attention_mask'].float()
-
+    # Pick a random node
     node = random.choice(nodes)
-    upload_time, inference_time, download_time = estimate_latency(node, input_len, gen_len)
-    simulated_latency = upload_time + inference_time + download_time
 
-    loop = asyncio.get_event_loop()
-    try:
-        output = await loop.run_in_executor(
-            executor,
-            lambda: model.generate(
-                **{k: v.to(device) for k, v in raw_inputs.items()},
-                max_new_tokens=gen_len,
-                do_sample=True,
-                temperature=0.7,
-                top_k=50,
-                top_p=0.9,
-                repetition_penalty=1.2,
-                pad_token_id=tokenizer.eos_token_id
-            )
+    with torch.no_grad():
+        outputs = model.generate(
+            **raw_inputs,
+            max_new_tokens=max(gen_lens),
+            do_sample=True,
+            temperature=0.7,
+            top_k=50,
+            top_p=0.9,
+            repetition_penalty=1.2,
+            pad_token_id=tokenizer.eos_token_id,
         )
-    except Exception as e:
-        print(f"Request failed: {e}")
-        return None
 
-    if 1.5 <= simulated_latency <= 60:
-        generated_text = tokenizer.decode(output[0], skip_special_tokens=True)
-        print("Successful Request")
-        print(f"Node: {node.name}")
-        print(f"Prompt: {prompt}")
-        print(f"Answer: {generated_text}")
-        print(f"Latency: {simulated_latency:.2f} seconds")
-        print(f"Required Accuracy: {required_acc:.2f}")
+    results = []
+    for i, output in enumerate(outputs):
+        upload_time, inference_time, download_time = estimate_latency(node, input_lens[i], gen_lens[i])
+        simulated_latency = upload_time + inference_time + download_time
 
-        return {
-            "arrival_time": arrival_time,
-            "input_length": input_len,
-            "generation_length": gen_len,
-            "required_accuracy": required_acc,
-            "prompt_tokens": raw_inputs["input_ids"].to(device),
-            "generated_text": generated_text,
-            "latency": simulated_latency,
-            "node": node.name
-        }
-    else:
-        return None
+        if 0 <= simulated_latency <= 15:
+            generated_text = tokenizer.decode(output, skip_special_tokens=True)
+            results.append({
+                "arrival_time": arrival_times[i],
+                "input_length": input_lens[i],
+                "generation_length": gen_lens[i],
+                "required_accuracy": required_accs[i],
+                "prompt_tokens": raw_inputs["input_ids"][i],
+                "generated_text": generated_text,
+                "latency": simulated_latency,
+                "node": node.name,
+            })
+
+    return results
+
+
+def bucket_and_batch(arrival_times, input_lens, gen_lens, prompts, required_accs, token_limit=2048):
+    batches = []
+    current_batch = []
+    current_token_sum = 0
+
+    for i in range(len(prompts)):
+        total_len = input_lens[i] + gen_lens[i]
+
+        if current_token_sum + total_len > token_limit and current_batch:
+            batches.append(current_batch)
+            current_batch = []
+            current_token_sum = 0
+
+        current_batch.append((arrival_times[i], prompts[i], input_lens[i], gen_lens[i], required_accs[i]))
+        current_token_sum += total_len
+
+    if current_batch:
+        batches.append(current_batch)
+
+    return batches
 
 async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
     start_time = time.time()
@@ -120,28 +137,55 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
 
     successful_requests = []
     dropped_requests = 0
+    completions_by_second = defaultdict(int)
 
-    with ThreadPoolExecutor() as executor:
-        tasks = [
-            run_request(model, tokenizer, arrival, device, nodes, executor)
-            for arrival in arrivals
-        ]
-        results = await asyncio.gather(*tasks)
+    # Generate all request parameters
+    input_lens = [random.choice(prompt_lengths) for _ in arrivals]
+    gen_lens = [random.choice(prompt_lengths) for _ in arrivals]
+    required_accs = [random.uniform(0, 1) for _ in arrivals]
+    prompts = [get_prompt() for _ in arrivals]
 
-    for result in results:
-        if result is not None:
-            successful_requests.append(result)
-        else:
-            dropped_requests += 1
+    # Batch requests
+    batches = bucket_and_batch(arrivals, input_lens, gen_lens, prompts, required_accs, token_limit=2048)
+
+    for batch in batches:
+        batch_arrival_times = [item[0] for item in batch]
+        batch_prompts = [item[1] for item in batch]
+        batch_input_lens = [item[2] for item in batch]
+        batch_gen_lens = [item[3] for item in batch]
+        batch_required_accs = [item[4] for item in batch]
+
+        try:
+            batch_results = await run_request(
+                model, tokenizer,
+                batch_arrival_times, batch_prompts,
+                batch_input_lens, batch_gen_lens,
+                batch_required_accs,
+                device, nodes
+            )
+        except Exception as e:
+            print(f"Batch failed: {e}")
+            dropped_requests += len(batch)
+            continue
+
+        for result in batch_results:
+            complete_time = result["arrival_time"] + result["latency"]
+            second = int(complete_time)
+            completions_by_second[second] += 1
+
+        successful_requests.extend(batch_results)
+        dropped_requests += len(batch) - len(batch_results)
 
     print(f"\nTotal requests: {len(arrivals)}")
-    print(f"Successful (1.5s–60s): {len(successful_requests)}")
+    print(f"Successful (0s–60s): {len(successful_requests)}")
     print(f"Dropped: {dropped_requests}")
-
-    end_time = time.time()
-    total_time = end_time - start_time
-    print(f"\nTotal simulation time: {total_time:.2f} seconds")
     print(f"Total simulation time: {time.time() - start_time:.2f} seconds")
 
-    return successful_requests
+    return {
+    "arrivals": arrivals,
+    "completions_by_second": completions_by_second,
+    "successful_requests": successful_requests
+}
+
+
 

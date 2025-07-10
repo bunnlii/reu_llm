@@ -25,7 +25,6 @@ def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
         gen_len = np.random.choice(prompt_lengths)
         required_acc = np.random.uniform(0, 1)
 
-        # Get and tokenize prompt
         prompt = orca_data[random.randint(0, len(orca_data) - 1)]["question"]
         inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=input_len)
         if 'attention_mask' in inputs:
