@@ -193,7 +193,7 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
     print(f"Successful (0s–60s): {len(all_successful)}")
     print(f"Dropped: {len(arrivals) - len(all_successful)}")
     print(f"Total simulation time: {time.time() - start_time:.2f} seconds")
-
+ 
     return {
         "arrivals": arrivals,
         "completions_by_second": completions_by_second,

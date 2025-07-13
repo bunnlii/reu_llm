@@ -1,5 +1,6 @@
 import os
 import torch
+import time
 import torch._dynamo
 torch._dynamo.config.suppress_errors = True
 
@@ -11,6 +12,7 @@ from collections import Counter
 import matplotlib.pyplot as plt
 
 def main():
+    start_time = time.time()
     device = "cuda:0"
     quantized_model_path = str(Path("./quantized_bloom_3b").resolve())
     # quantized_model_path = str(Path("./quantized_bloom_7b1").resolve())
@@ -37,6 +39,9 @@ def main():
     for i, req in enumerate(results["successful_requests"]):
         print(f"Request #{i+1} - Arrival time: {req.arrival_time:.2f}s, Input length: {req.prompt_length}, Required accuracy: {req.accuracy:.2f}")
         print(f"Generated Text:\n{req.generated_text}\n{'-'*40}")
+
+    total_time = time.time() - start_time
+    print(f"\n Total simulation runtime: {total_time:.2f} seconds")
 
     return results
 

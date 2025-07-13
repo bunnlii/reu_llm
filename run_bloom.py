@@ -4,7 +4,7 @@ import torch._dynamo
 torch._dynamo.config.suppress_errors = True
 
 from pathlib import Path
-from simulate_requests3 import simulate_requests
+from simulate_requests import simulate_requests
 from transformers import AutoModelForCausalLM, AutoTokenizer, GPTQConfig
 import asyncio
 from collections import Counter
