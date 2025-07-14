@@ -14,6 +14,8 @@ from simulation_env import create_nodes
 
 orca_data = load_dataset("Open-Orca/OpenOrca", split="train")
 bertscore = evaluate.load("bertscore")
+bertscore_model = "microsoft/deberta-xlarge-mnli"
+
 
 def get_prompt_and_reference():
     item = orca_data[random.randint(0, len(orca_data) - 1)]
@@ -68,7 +70,7 @@ async def run_request(model, tokenizer, arrival_times, prompts, references, inpu
             top_p=0.9,
             pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
             eos_token_id=tokenizer.eos_token_id,
-            repetition_penalty=1.1
+            repetition_penalty=1.2
         )
 
     if torch.cuda.is_available():
@@ -98,8 +100,15 @@ async def run_request(model, tokenizer, arrival_times, prompts, references, inpu
 
         reference_text = references[i]
 
-        bertscore_result = bertscore.compute(predictions=[generated_text], references=[reference_text], lang="en")
-        accuracy = bertscore_result["f1"][0]
+        # bertscore_result = bertscore.compute(
+        #     predictions=[generated_text],
+        #     references=[reference_text],
+        #     lang="en",
+        #     model_type=bertscore_model,
+        #     rescale_with_baseline=False
+        # )
+        # accuracy = bertscore_result["f1"][0]
+        accuracy = 0
 
         results.append({
             "arrival_time": arrival_times[i],
@@ -135,6 +144,7 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
     successful_requests = []
     dropped_requests = 0
     completions_by_second = defaultdict(int)
+    estimated_latencies = []  # New: collect estimated latency per request
 
     input_lens = [random.choice(prompt_lengths) for _ in arrivals]
     gen_lens = [random.choice(prompt_lengths) for _ in arrivals]
@@ -145,6 +155,7 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
     references = [r for p, r in prompt_refs]
 
     batches = group_by_epoch(arrivals, input_lens, gen_lens, prompts, required_accs, references)
+    result_counter = 1
 
     for batch in batches:
         i = 0
@@ -188,7 +199,7 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
                 continue
 
             for k, result in enumerate(batch_results):
-                print(f"=== Result {k+1} ===")
+                print(f"=== Result {result_counter} ===")
                 print(f"Node: {result['node']}")
                 print(f"Latency: {result['latency']:.3f} seconds")
                 print(f"BERTScore Accuracy: {result['accuracy']:.3f}\n")
@@ -202,12 +213,16 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
 
                 print("=" * 40)
 
+                estimated_latencies.append(result["latency"])
+
                 if 0 <= result["latency"] <= 2.0:
                     second = int(result["arrival_time"] + result["latency"])
                     completions_by_second[second] += 1  
                     successful_requests.append(result)
                 else:
                     dropped_requests += 1
+
+                result_counter += 1
 
             dropped_requests += len(trimmed_batch) - len(batch_results)
             i = j
@@ -221,5 +236,6 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
         "arrivals": arrivals,
         "completions_by_second": completions_by_second,
         "successful_requests": successful_requests
+        "estimated_latencies": estimated_latencies
     }
 
