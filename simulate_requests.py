@@ -13,8 +13,8 @@ from datasets import load_dataset
 from simulation_env import create_nodes
 
 orca_data = load_dataset("Open-Orca/OpenOrca", split="train")
-#bertscore = evaluate.load("bertscore")
-#bertscore_model = "microsoft/deberta-xlarge-mnli"
+bertscore = evaluate.load("bertscore")
+bertscore_model = "microsoft/deberta-xlarge-mnli"
 
 
 def get_prompt_and_reference():
@@ -63,7 +63,7 @@ async def run_request(model, tokenizer, arrival_times, prompts, references, inpu
 
     with torch.no_grad():
         outputs = model.generate(
-             **raw_inputs,
+            **raw_inputs,
             max_new_tokens=max(gen_lens),
             do_sample=True,
             temperature=0.7,
@@ -76,6 +76,8 @@ async def run_request(model, tokenizer, arrival_times, prompts, references, inpu
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     batch_end_time = time.time()
+    real_latency = batch_end_time - batch_start_time
+    total_tokens_batch = sum(input_lens[i] + gen_lens[i] for i in range(len(outputs)))
 
     flops_per_token = 1e9
     results = []
@@ -92,6 +94,9 @@ async def run_request(model, tokenizer, arrival_times, prompts, references, inpu
         compute_latency = total_tokens * flops_per_token / node.flops
         estimated_latency = transmission_delay + compute_latency
 
+        real_latency_i = real_latency * (total_tokens / total_tokens_batch)
+        total_latency = estimated_latency + real_latency_i
+
         input_ids = raw_inputs["input_ids"][i]
         output_ids = output.tolist()
 
@@ -100,15 +105,16 @@ async def run_request(model, tokenizer, arrival_times, prompts, references, inpu
 
         reference_text = references[i]
 
-        # bertscore_result = bertscore.compute(
-        #     predictions=[generated_text],
-        #     references=[reference_text],
-        #     lang="en",
-        #     model_type=bertscore_model,
-        #     rescale_with_baseline=False
-        # )
-        # accuracy = bertscore_result["f1"][0]
-        accuracy = 0
+        bertscore_result = bertscore.compute(
+            predictions=[generated_text],
+            references=[reference_text],
+            lang="en",
+            model_type=bertscore_model,
+            rescale_with_baseline=False
+        )
+        accuracy = bertscore_result["f1"][0]
+
+        #accuracy = 0
 
         results.append({
             "arrival_time": arrival_times[i],
@@ -119,7 +125,9 @@ async def run_request(model, tokenizer, arrival_times, prompts, references, inpu
             "generated_text": generated_text,
             "reference_text": reference_text,
             "accuracy": accuracy,
-            "latency": estimated_latency,
+            "latency": total_latency,
+            "estimated_latency": estimated_latency,
+            "real_latency": real_latency_i,
             "node": node.name,
         })
 
@@ -231,7 +239,7 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
     print(f"Successful (1.5s–2.0s deadline): {len(successful_requests)}")
     print(f"Dropped: {dropped_requests}")
     print(f"Total simulation time: {time.time() - start_time:.2f} seconds")
-
+    
     total_squared_latency = sum(estimated_latencies)
     print(f"Total squared latency: {total_squared_latency:.3f} seconds^2")
 
@@ -241,4 +249,5 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
         "successful_requests": successful_requests,
         "estimated_latencies": estimated_latencies
     }
+
 

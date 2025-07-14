@@ -3,7 +3,7 @@ import torch
 import torch._dynamo
 torch._dynamo.config.suppress_errors = True
 
-from data import plot_latencies
+from data import plot_metrics 
 from pathlib import Path
 from simulate_requests import simulate_requests
 from transformers import AutoModelForCausalLM, AutoTokenizer, GPTQConfig
@@ -28,14 +28,14 @@ def main():
     )
 
     print("Simulating requests")
-    results = asyncio.run(simulate_requests(rate_lambda=50, duration_sec=10, model=model, tokenizer=tokenizer))
-
-    #for i, req in enumerate(results["successful_requests"]):
-        #print(f"Request #{i+1} - Arrival time: {req['arrival_time']:.2f}s, Input length: {req['input_length']}, Required accuracy: {req['required_accuracy']:.2f}")
-        #print(f"Generated Text:\n{req['generated_text']}\n{'-'*40}")
+    results = asyncio.run(simulate_requests(rate_lambda=200, duration_sec=10, model=model, tokenizer=tokenizer))
 
     return results
 
 if __name__ == "__main__":
     results = main()
-    plot_latencies([req["latency"] for req in results["successful_requests"]])
+    plot_metrics(
+        latencies=[req["latency"] for req in results["successful_requests"]],
+        successful_requests=results["successful_requests"]
+    )
+
