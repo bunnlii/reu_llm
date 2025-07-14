@@ -12,9 +12,9 @@ import matplotlib.pyplot as plt
 
 def main():
     device = "cuda:0"
-    quantized_model_path = str(Path("./quantized_bloom_3b").resolve())
-    # quantized_model_path = str(Path("./quantized_bloom_7b1").resolve())
-    # quantized_model_path = str(Path("./quantized_opt_13b").resolve())
+    # quantized_model_path = str(Path("./quantized_bloom_3b").resolve())
+    quantized_model_path = str(Path("./quantized_bloom_7b1").resolve())
+    #quantized_model_path = str(Path("./quantized_opt_13b").resolve())
 
     print("Loading tokenizer")
     tokenizer = AutoTokenizer.from_pretrained(quantized_model_path, local_files_only=True)

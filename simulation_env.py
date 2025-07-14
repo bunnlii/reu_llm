@@ -16,6 +16,7 @@ class Node:
         self.tx_power_ul_dbm = tx_power_ul_dbm
         self.tx_power_dl_dbm = tx_power_dl_dbm
         self.pathloss_model = pathloss_model
+        self.flops = self.num_gpus * self.flops_per_gpu
 
 def create_edge():
     return Node(
