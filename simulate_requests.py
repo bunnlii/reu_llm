@@ -213,7 +213,7 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
 
                 print("=" * 40)
 
-                estimated_latencies.append(result["latency"])
+                estimated_latencies.append(result["latency"] ** 2)
 
                 if 0 <= result["latency"] <= 2.0:
                     second = int(result["arrival_time"] + result["latency"])
@@ -231,6 +231,9 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
     print(f"Successful (1.5s–2.0s deadline): {len(successful_requests)}")
     print(f"Dropped: {dropped_requests}")
     print(f"Total simulation time: {time.time() - start_time:.2f} seconds")
+
+    total_squared_latency = sum(estimated_latencies)
+    print(f"Total squared latency: {total_squared_latency:.3f} seconds^2")
 
     return {
         "arrivals": arrivals,
