@@ -3,20 +3,18 @@ import torch
 import torch._dynamo
 torch._dynamo.config.suppress_errors = True
 
-from data import plot_metrics 
 from pathlib import Path
 from simulate_requests import simulate_requests
 from transformers import AutoModelForCausalLM, AutoTokenizer, GPTQConfig
 import asyncio
 
-def main():
-    device = "cuda:0"
-    quantized_model_path = str(Path("./quantized_bloom_3b").resolve())
+from data import plot_combined_metrics
 
-    print("Loading tokenizer")
+async def run_model(quantized_model_path, rate_lambda=50, duration_sec=10):
+    print(f"Loading tokenizer from {quantized_model_path}")
     tokenizer = AutoTokenizer.from_pretrained(quantized_model_path, local_files_only=True)
 
-    print("Loading model with GPTQ quantization config")
+    print(f"Loading model with GPTQ quantization config from {quantized_model_path}")
     gptq_config = GPTQConfig(bits=8, group_size=128, tokenizer=tokenizer)
 
     model = AutoModelForCausalLM.from_pretrained(
@@ -27,15 +25,31 @@ def main():
         device_map={"": 0}
     )
 
-    print("Simulating requests")
-    results = asyncio.run(simulate_requests(rate_lambda=200, duration_sec=10, model=model, tokenizer=tokenizer))
+    print(f"Simulating requests for model at {quantized_model_path}")
+    results = await simulate_requests(rate_lambda=rate_lambda, duration_sec=duration_sec, model=model, tokenizer=tokenizer)
 
     return results
 
+async def main():
+    model_paths = [
+        str(Path("./quantized_bloom_3b").resolve()),
+        str(Path("./quantized_bloom_7b1").resolve()),
+        str(Path("./quantized_opt_13b").resolve())
+    ]
+
+    all_latencies = []
+    all_successful_requests = []
+    model_names = []
+
+    for path in model_paths:
+        results = await run_model(path)
+        latencies = [req["latency"] for req in results["successful_requests"]]
+        all_latencies.append(latencies)
+        all_successful_requests.append(results["successful_requests"])
+        model_names.append(Path(path).name)
+
+    plot_combined_metrics(all_latencies, all_successful_requests, model_names=model_names)
+
 if __name__ == "__main__":
-    results = main()
-    plot_metrics(
-        latencies=[req["latency"] for req in results["successful_requests"]],
-        successful_requests=results["successful_requests"]
-    )
+    asyncio.run(main())
 

@@ -5,3 +5,5 @@
 !.gitignore
 !*.py
 !*/
+!*.png
+!*.txt

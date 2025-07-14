@@ -1,46 +1,46 @@
 import matplotlib.pyplot as plt
 
-def plot_metrics(latencies, successful_requests):
-    if not successful_requests:
-        print("No successful requests to plot.")
-        return
+def plot_combined_metrics(all_latencies, all_successful_requests, model_names=None):
+    """
+    all_latencies: list of lists of latencies (one list per model)
+    all_successful_requests: list of lists of successful requests (one list per model)
+    model_names: list of strings for legend labels, optional
+    """
 
-    accuracies = [req["accuracy"] for req in successful_requests]
+    colors = ['blue', 'green', 'orange', 'red', 'purple', 'brown', 'cyan']
 
-    # Plot 1: Latency per request
-    # plt.figure(figsize=(10, 4))
-    # plt.plot(latencies, marker='o', linestyle='-', color='blue', alpha=0.7)
-    # plt.title("Estimated Latency per Request")
-    # plt.xlabel("Request Index")
-    # plt.ylabel("Latency (seconds²)")
-    # plt.grid(True)
-    # plt.tight_layout()
-    # plt.savefig("latency_per_request.png")
-    # plt.close()
-    # print("Saved latency line plot to latency_per_request.png")
+    # 1) Latency histogram (overlayed histograms)
+    plt.figure(figsize=(12, 5))
+    bins = 20
+    for i, latencies in enumerate(all_latencies):
+        label = model_names[i] if model_names else f"Model {i+1}"
+        color = colors[i % len(colors)]
+        plt.hist(latencies, bins=bins, color=color, alpha=0.4, edgecolor='black', label=label)
+    plt.title("Latency Distribution (Histogram)")
+    plt.xlabel("Latency (seconds²)")
+    plt.ylabel("Number of Requests")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("combined_latency_histogram.png")
+    plt.close()
+    print("Saved combined latency histogram to combined_latency_histogram.png")
 
-    #Plot 2: Latency histogram
-    # plt.figure(figsize=(10, 4))
-    # plt.hist(latencies, bins=20, color='green', edgecolor='black', alpha=0.7)
-    # plt.title("Latency Distribution (Histogram)")
-    # plt.xlabel("Latency (seconds²)")
-    # plt.ylabel("Number of Requests")
-    # plt.grid(True)
-    # plt.tight_layout()
-    # plt.savefig("latency_histogram.png")
-    # plt.close()
-    # print("Saved latency histogram to latency_histogram.png")
-
-    #Plot 3: Accuracy per request
-    plt.figure(figsize=(10, 4))
-    plt.plot(accuracies, marker='o', linestyle='-', color='orange', alpha=0.7)
+    # 2) Accuracy per request (line plot)
+    plt.figure(figsize=(12, 5))
+    for i, successful_requests in enumerate(all_successful_requests):
+        accuracies = [req["accuracy"] for req in successful_requests]
+        label = model_names[i] if model_names else f"Model {i+1}"
+        color = colors[i % len(colors)]
+        plt.plot(accuracies, marker='o', linestyle='-', color=color, alpha=0.7, label=label)
     plt.title("BERTScore Accuracy per Request")
     plt.xlabel("Request Index")
     plt.ylabel("Accuracy (F1 Score)")
     plt.ylim(0, 1.0)
     plt.grid(True)
+    plt.legend()
     plt.tight_layout()
-    plt.savefig("accuracy_per_request.png")
+    plt.savefig("combined_accuracy_per_request.png")
     plt.close()
-    print("Saved accuracy plot to accuracy_per_request.png")
+    print("Saved combined accuracy plot to combined_accuracy_per_request.png")
 

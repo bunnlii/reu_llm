@@ -38,11 +38,11 @@ def quantize_model(model_id, save_dir, bits=4, group_size=128):
 if __name__ == "__main__":
 
     # BLOOM-3B
-    quantize_model("bigscience/bloom-3b", "./quantized_bloom_3b", bits=8, group_size=128)
+    # quantize_model("bigscience/bloom-3b", "./quantized_bloom_3b", bits=8, group_size=128)
 
     # BLOOM-7.1B
-    # quantize_model("bigscience/bloom-7b1", "./quantized_bloom_7b1", bits=8, group_size=128)
+    #quantize_model("bigscience/bloom-7b1", "./quantized_bloom_7b1", bits=8, group_size=128)
 
     # OPT-13B
-    #quantize_model("facebook/opt-13b", "./quantized_opt_13b", bits=8, group_size=128)
+    quantize_model("facebook/opt-13b", "./quantized_opt_13b", bits=8, group_size=128)
 
