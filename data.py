@@ -13,5 +13,6 @@ def plot_latencies(latencies, save_path="latency_plot.png"):
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(save_path)
-    #plt.show()
+    # plt.show()  # Comment out if running non-interactively
+    plt.close()
     print(f"Latency plot saved to {save_path}")

@@ -3,18 +3,15 @@ import torch
 import torch._dynamo
 torch._dynamo.config.suppress_errors = True
 
+from data import plot_latencies
 from pathlib import Path
-from simulate_requests3 import simulate_requests
+from simulate_requests import simulate_requests
 from transformers import AutoModelForCausalLM, AutoTokenizer, GPTQConfig
 import asyncio
-from collections import Counter
-import matplotlib.pyplot as plt
 
 def main():
     device = "cuda:0"
     quantized_model_path = str(Path("./quantized_bloom_3b").resolve())
-    # quantized_model_path = str(Path("./quantized_bloom_7b1").resolve())
-    # quantized_model_path = str(Path("./quantized_opt_13b").resolve())
 
     print("Loading tokenizer")
     tokenizer = AutoTokenizer.from_pretrained(quantized_model_path, local_files_only=True)
@@ -33,16 +30,12 @@ def main():
     print("Simulating requests")
     results = asyncio.run(simulate_requests(rate_lambda=50, duration_sec=10, model=model, tokenizer=tokenizer))
 
-    # each generated request (may remove later)
     #for i, req in enumerate(results["successful_requests"]):
-        #print(f"Request #{i+1} - Arrival time: {req.arrival_time:.2f}s, Input length: {req.prompt_length}, Required accuracy: {req.accuracy:.2f}")
-        #print(f"Generated Text:\n{req.generated_text}\n{'-'*40}")
-
-    total_time = time.time() - start_time
-    print(f"\n Total simulation runtime: {total_time:.2f} seconds")
+        #print(f"Request #{i+1} - Arrival time: {req['arrival_time']:.2f}s, Input length: {req['input_length']}, Required accuracy: {req['required_accuracy']:.2f}")
+        #print(f"Generated Text:\n{req['generated_text']}\n{'-'*40}")
 
     return results
 
 if __name__ == "__main__":
     results = main()
-
+    plot_latencies([req["latency"] for req in results["successful_requests"]])

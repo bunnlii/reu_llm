@@ -13,8 +13,8 @@ from datasets import load_dataset
 from simulation_env import create_nodes
 
 orca_data = load_dataset("Open-Orca/OpenOrca", split="train")
-bertscore = evaluate.load("bertscore")
-bertscore_model = "microsoft/deberta-xlarge-mnli"
+#bertscore = evaluate.load("bertscore")
+#bertscore_model = "microsoft/deberta-xlarge-mnli"
 
 
 def get_prompt_and_reference():
@@ -235,7 +235,7 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
     return {
         "arrivals": arrivals,
         "completions_by_second": completions_by_second,
-        "successful_requests": successful_requests
+        "successful_requests": successful_requests,
         "estimated_latencies": estimated_latencies
     }
 
