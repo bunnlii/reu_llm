@@ -4,7 +4,7 @@ import torch._dynamo
 torch._dynamo.config.suppress_errors = True
 
 from pathlib import Path
-from simulate_requests4 import simulate_requests
+from simulate_requests import simulate_requests
 from transformers import AutoModelForCausalLM, AutoTokenizer, GPTQConfig
 import asyncio
 
@@ -24,7 +24,7 @@ async def run_model(quantized_model_path, rate_lambda=50, duration_sec=10):
         torch_dtype=torch.float16,
         trust_remote_code=True,
         quantization_config=gptq_config,
-        device_map={"": 0}
+        device_map={"": 7}
     )
 
     print(f"Simulating requests for model at {quantized_model_path}")

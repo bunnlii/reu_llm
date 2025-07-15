@@ -23,7 +23,6 @@ bertscore_model = "microsoft/deberta-xlarge-mnli"
 #     prompt = f"Instruction: Answer the following question clearly.\nQuestion: {item['question']}\nAnswer:"
 #     return prompt, item["response"]
 
-#THIS IS FOR ALPACA DATASET
 def get_prompt_and_reference():
     item = alpaca_data[random.randint(0, len(alpaca_data) - 1)]
     instruction = item['instruction'].strip()
@@ -75,7 +74,7 @@ async def run_request(model, tokenizer, arrival_times, prompts, references, inpu
         outputs = model.generate(
             **raw_inputs,
             max_new_tokens=max(gen_lens),
-            do_sample=True,
+            do_sample=False,
             temperature=0.7,
             top_p=0.9,
             pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
@@ -123,8 +122,7 @@ async def run_request(model, tokenizer, arrival_times, prompts, references, inpu
             rescale_with_baseline=False
         )
         accuracy = bertscore_result["f1"][0]
-
-        #accuracy = 0
+        # accuracy = 0 
 
         results.append({
             "arrival_time": arrival_times[i],
@@ -162,7 +160,7 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
     successful_requests = []
     dropped_requests = 0
     completions_by_second = defaultdict(int)
-    estimated_latencies = []
+    estimated_latencies = [] 
 
     input_lens = [random.choice(prompt_lengths) for _ in arrivals]
     gen_lens = [random.choice(prompt_lengths) for _ in arrivals]

@@ -4,6 +4,20 @@ import random
 import matplotlib.pyplot as plt
 #from algo1 import is_valid
 
+def is_valid(requests):
+    t_min = min(req.latency for req in requests)
+    tau_min = t_min
+    total_bandwidth = 0
+    total_output = 0
+    for req in requests:
+        total_bandwidth += req.get_bandwidth()
+        total_output += req.output_length
+        if total_bandwidth > tau_min:  
+            return 0
+        # if total_output > k_6:
+        #     return 0
+    return total_bandwidth
+
 def plot_current(reqs):
 
     print(reqs)

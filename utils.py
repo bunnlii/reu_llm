@@ -4,14 +4,12 @@ k_5 = 1.0
 k_6 = 1000.0
 
 class Request:
-    def __init__(self, id, prompt_length, output_length, latency, accuracy, prompt, arrival_time):
+    def __init__(self, id, prompt_length, output_length, latency, accuracy):
         self.id = id
         self.prompt_length = prompt_length
         self.output_length = output_length
         self.latency = latency
         self.accuracy = accuracy
-        self.prompt = prompt
-        self.arrival_time = arrival_time
     
     def get_bandwidth(self):
         return self.get_bandwidth_from_output_length(self.output_length)

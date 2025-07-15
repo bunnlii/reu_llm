@@ -14,7 +14,7 @@ from simulation_env import create_nodes
 
 from utils import Request
 from avl import AVLTree  # replace with actual AVLTree import
-from algo1_ontime import paper_1_sol
+from algo1_ontime import paper_1_sol  
 from fast_scheduler_ontime import opt_sol
 
 import matplotlib.pyplot as plt
@@ -234,12 +234,10 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
 
                 req = Request(
                     id=req_id,
-                    prompt=result["prompt_tokens"],
                     prompt_length=result["input_length"],
                     output_length=result["generation_length"],
                     latency=result["latency"],
-                    accuracy=result["accuracy"],
-                    arrival_time=result["arrival_time"]
+                    accuracy=result["accuracy"]
                 )
                 req_id += 1
                 request_objects.append(req)
@@ -261,33 +259,88 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
     print(f"Baseline dropped: {baseline_dropped_requests}")
     print(f"Total simulation time: {time.time() - start_time:.2f} seconds")
 
-    # Run your two algorithms on the request_objects
-    print("\nRunning OPT_SOL algorithm...")
-    opt_result = opt_sol(request_objects.copy())
-    opt_dropped = len(request_objects) - len(opt_result)
-    print(f"OPT_SOL dropped: {opt_dropped}")
+    print("\nPreparing to evaluate optimized schedulers...")
 
-    print("\nRunning PAPER_1_SOL algorithm...")
-    paper_result = paper_1_sol(request_objects.copy())
-    paper_dropped = len(request_objects) - len(paper_result)
-    print(f"PAPER_1_SOL dropped: {paper_dropped}")
+    prompts_map = {i: p for i, p in enumerate(prompts)}
+    references_map = {i: r for i, r in enumerate(references)}
 
-    # Bar chart
+    # Assign unique IDs to requests (required for your algorithms)
+    for i, req in enumerate(request_objects):
+        req.id = i
+
+    opt_dropped = await evaluate_scheduler("OPT_SOL", opt_sol, request_objects, prompts_map, references_map, model, tokenizer, nodes, device)
+    paper_dropped = await evaluate_scheduler("PAPER_1_SOL", paper_1_sol, request_objects, prompts_map, references_map, model, tokenizer, nodes, device)
+
     labels = ['Baseline', 'OPT_SOL', 'PAPER_1_SOL']
     dropped_counts = [baseline_dropped_requests, opt_dropped, paper_dropped]
 
     plt.figure(figsize=(8, 6))
     plt.bar(labels, dropped_counts, color=['red', 'green', 'blue'])
     plt.ylabel("Dropped Requests")
-    plt.title("Scheduling Algorithm Comparison")
-    plt.grid(True, axis='y', linestyle='--', alpha=0.5)
+    plt.title("Dropped Requests by Scheduler")
+    plt.grid(True, axis='y', linestyle='--', alpha=0.6)
+    plt.tight_layout()
     plt.show()
 
     return {
         "arrivals": arrivals,
         "completions_by_second": completions_by_second,
-        "successful_requests": baseline_successful_requests,
-        "estimated_latencies": estimated_latencies,
+        "baseline_dropped": baseline_dropped_requests,
         "opt_dropped": opt_dropped,
         "paper_dropped": paper_dropped,
+        "successful_requests": baseline_successful_requests,
+        "estimated_latencies": estimated_latencies,
     }
+
+async def evaluate_scheduler(name, scheduler_fn, requests, prompts, references, model, tokenizer, nodes, device):
+    print(f"\nEvaluating: {name}")
+    scheduled_reqs = scheduler_fn(requests.copy())
+
+    successful = 0
+    dropped = 0
+    batched = []
+    batch = []
+    batch_token_sum = 0
+
+    for req in scheduled_reqs:
+        total_tokens = req.prompt_length + req.output_length
+        if len(batch) >= max_batch_size or batch_token_sum + total_tokens > max_total_tokens_per_batch:
+            batched.append(batch)
+            batch = []
+            batch_token_sum = 0
+        batch.append(req)
+        batch_token_sum += total_tokens
+    if batch:
+        batched.append(batch)
+
+    request_id_map = {r.id: r for r in requests}
+
+    for batch in batched:
+        prompts_batch = [prompts[r.id] for r in batch]
+        references_batch = [references[r.id] for r in batch]
+        input_lens = [r.prompt_length for r in batch]
+        output_lens = [r.output_length for r in batch]
+        required_accs = [r.accuracy for r in batch]
+        #arrival_times = [r.creation_time for r in batch]
+
+        try:
+            results = await run_request(
+                model, tokenizer,
+                arrival_times, prompts_batch, references_batch,
+                input_lens, output_lens, required_accs,
+                device, nodes
+            )
+        except Exception as e:
+            print(f"Batch failed under {name}: {e}")
+            dropped += len(batch)
+            continue
+
+        for r in results:
+            if r["latency"] <= 2.0:
+                successful += 1
+            else:
+                dropped += 1
+
+    print(f"{name} — Total Scheduled: {len(scheduled_reqs)}, Dropped: {dropped}, Success: {successful}")
+    return dropped
+
