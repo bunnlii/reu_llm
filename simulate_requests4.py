@@ -12,24 +12,23 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, GPTQConfig
 from datasets import load_dataset
 from simulation_env import create_nodes
 
-#orca_data = load_dataset("Open-Orca/OpenOrca", split="train")
-alpaca_data = load_dataset("tatsu-lab/alpaca", split="train")
+from utils import Request
+from avl import AVLTree  # replace with actual AVLTree import
+from algo1_ontime import paper_1_sol
+from fast_scheduler_ontime import opt_sol
+
+import matplotlib.pyplot as plt
+from collections import defaultdict
+
+
+orca_data = load_dataset("Open-Orca/OpenOrca", split="train")
 bertscore = evaluate.load("bertscore")
 bertscore_model = "microsoft/deberta-xlarge-mnli"
 
-# THIS IS FOR ORCA DATASET
-# def get_prompt_and_reference():
-#     item = orca_data[random.randint(0, len(orca_data) - 1)]
-#     prompt = f"Instruction: Answer the following question clearly.\nQuestion: {item['question']}\nAnswer:"
-#     return prompt, item["response"]
 
-#THIS IS FOR ALPACA DATASET
 def get_prompt_and_reference():
-    item = alpaca_data[random.randint(0, len(alpaca_data) - 1)]
-    instruction = item['instruction'].strip()
-    output = item['output'].strip()
-    prompt = f"Instruction: {instruction}\nAnswer:"
-    return prompt, output
+    item = orca_data[random.randint(0, len(orca_data) - 1)]
+    return item["question"], item["response"]
 
 prompt_lengths = [128, 256, 512]
 max_batch_size = 8
@@ -159,8 +158,8 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
     edge_server, uav, vehicle = await create_nodes()
     nodes = [edge_server, uav, vehicle]
 
-    successful_requests = []
-    dropped_requests = 0
+    baseline_successful_requests = []
+    baseline_dropped_requests = 0
     completions_by_second = defaultdict(int)
     estimated_latencies = []
 
@@ -174,6 +173,8 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
 
     batches = group_by_epoch(arrivals, input_lens, gen_lens, prompts, required_accs, references)
     result_counter = 1
+    request_objects = []
+    req_id = 0
 
     for batch in batches:
         i = 0
@@ -212,7 +213,7 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
                 )
             except Exception as e:
                 print(f"Batch failed: {e}")
-                dropped_requests += len(trimmed_batch)
+                baseline_dropped_requests += len(trimmed_batch)
                 i = j
                 continue
 
@@ -221,43 +222,72 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
                 print(f"Node: {result['node']}")
                 print(f"Latency: {result['latency']:.3f} seconds")
                 print(f"BERTScore Accuracy: {result['accuracy']:.3f}\n")
-
                 print("Prompt:")
                 print(batch_prompts[k].strip())
                 print("\nGenerated Response:")
                 print(result['generated_text'].strip())
                 print("\nReference Response:")
                 print(result['reference_text'].strip())
-
                 print("=" * 40)
 
                 estimated_latencies.append(result["latency"] ** 2)
 
+                req = Request(
+                    id=req_id,
+                    prompt=result["prompt_tokens"],
+                    prompt_length=result["input_length"],
+                    output_length=result["generation_length"],
+                    latency=result["latency"],
+                    accuracy=result["accuracy"],
+                    arrival_time=result["arrival_time"]
+                )
+                req_id += 1
+                request_objects.append(req)
+
                 if 0 <= result["latency"] <= 2.0:
                     second = int(result["arrival_time"] + result["latency"])
-                    completions_by_second[second] += 1  
-                    successful_requests.append(result)
+                    completions_by_second[second] += 1
+                    baseline_successful_requests.append(result)
                 else:
-                    dropped_requests += 1
+                    baseline_dropped_requests += 1
 
                 result_counter += 1
 
-            dropped_requests += len(trimmed_batch) - len(batch_results)
+            baseline_dropped_requests += len(trimmed_batch) - len(batch_results)
             i = j
 
     print(f"\nTotal requests: {len(arrivals)}")
-    print(f"Successful (1.5s–2.0s deadline): {len(successful_requests)}")
-    print(f"Dropped: {dropped_requests}")
+    print(f"Baseline (1.5s–2.0s deadline): {len(baseline_successful_requests)} success")
+    print(f"Baseline dropped: {baseline_dropped_requests}")
     print(f"Total simulation time: {time.time() - start_time:.2f} seconds")
-    
-    total_squared_latency = sum(estimated_latencies)
-    print(f"Total squared latency: {total_squared_latency:.3f} seconds^2")
+
+    # Run your two algorithms on the request_objects
+    print("\nRunning OPT_SOL algorithm...")
+    opt_result = opt_sol(request_objects.copy())
+    opt_dropped = len(request_objects) - len(opt_result)
+    print(f"OPT_SOL dropped: {opt_dropped}")
+
+    print("\nRunning PAPER_1_SOL algorithm...")
+    paper_result = paper_1_sol(request_objects.copy())
+    paper_dropped = len(request_objects) - len(paper_result)
+    print(f"PAPER_1_SOL dropped: {paper_dropped}")
+
+    # Bar chart
+    labels = ['Baseline', 'OPT_SOL', 'PAPER_1_SOL']
+    dropped_counts = [baseline_dropped_requests, opt_dropped, paper_dropped]
+
+    plt.figure(figsize=(8, 6))
+    plt.bar(labels, dropped_counts, color=['red', 'green', 'blue'])
+    plt.ylabel("Dropped Requests")
+    plt.title("Scheduling Algorithm Comparison")
+    plt.grid(True, axis='y', linestyle='--', alpha=0.5)
+    plt.show()
 
     return {
         "arrivals": arrivals,
         "completions_by_second": completions_by_second,
-        "successful_requests": successful_requests,
-        "estimated_latencies": estimated_latencies
+        "successful_requests": baseline_successful_requests,
+        "estimated_latencies": estimated_latencies,
+        "opt_dropped": opt_dropped,
+        "paper_dropped": paper_dropped,
     }
-
-

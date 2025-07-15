@@ -8,13 +8,17 @@ def quantize_model(model_id, save_dir, bits=4, group_size=128):
     print(f"Loading tokenizer for GPTQ")
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     
-    print("Loading orca dataset")
-    orca_data = load_dataset("Open-Orca/OpenOrca", split="train")
+    # print("Loading orca dataset")
+    # orca_data = load_dataset("Open-Orca/OpenOrca", split="train")
     
+    print("Loading Alpaca dataset")
+    alpaca_data = load_dataset("yahma/alpaca-cleaned", split="train")
+
     print("Preparing examples for quantization")
     examples = []
-    for i in range(500):
-        prompt = orca_data[i]["question"]
+    for i in range(1000):
+        #prompt = orca_data[i]["question"]
+        prompt = alpaca_data[i]["instruction"]
         inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=128, padding="max_length")
         inputs = {k: v for k, v in inputs.items()}
         examples.append(inputs)
@@ -38,7 +42,7 @@ def quantize_model(model_id, save_dir, bits=4, group_size=128):
 if __name__ == "__main__":
 
     # BLOOM-3B
-    # quantize_model("bigscience/bloom-3b", "./quantized_bloom_3b", bits=8, group_size=128)
+    #quantize_model("bigscience/bloom-3b", "./quantized_bloom_3b", bits=8, group_size=128)
 
     # BLOOM-7.1B
     #quantize_model("bigscience/bloom-7b1", "./quantized_bloom_7b1", bits=8, group_size=128)

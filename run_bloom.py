@@ -4,7 +4,7 @@ import torch._dynamo
 torch._dynamo.config.suppress_errors = True
 
 from pathlib import Path
-from simulate_requests import simulate_requests
+from simulate_requests4 import simulate_requests
 from transformers import AutoModelForCausalLM, AutoTokenizer, GPTQConfig
 import asyncio
 
@@ -13,6 +13,8 @@ from data import plot_combined_metrics
 async def run_model(quantized_model_path, rate_lambda=50, duration_sec=10):
     print(f"Loading tokenizer from {quantized_model_path}")
     tokenizer = AutoTokenizer.from_pretrained(quantized_model_path, local_files_only=True)
+    tokenizer.padding_side = "left"
+    tokenizer.pad_token = tokenizer.eos_token
 
     print(f"Loading model with GPTQ quantization config from {quantized_model_path}")
     gptq_config = GPTQConfig(bits=8, group_size=128, tokenizer=tokenizer)
