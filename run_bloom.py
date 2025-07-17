@@ -8,9 +8,11 @@ from simulate_requests import simulate_requests
 from transformers import AutoModelForCausalLM, AutoTokenizer, GPTQConfig
 import asyncio
 
-from data import plot_combined_metrics
+from datasets import load_dataset 
+from data import plot_multiple_accuracies
+from data import plot_combined_metrics, plot_accuracy_per_100_requests
 
-async def run_model(quantized_model_path, rate_lambda=50, duration_sec=10):
+async def run_model(quantized_model_path, rate_lambda=10, duration_sec=10):
     print(f"Loading tokenizer from {quantized_model_path}")
     tokenizer = AutoTokenizer.from_pretrained(quantized_model_path, local_files_only=True)
     tokenizer.padding_side = "left"
@@ -24,7 +26,7 @@ async def run_model(quantized_model_path, rate_lambda=50, duration_sec=10):
         torch_dtype=torch.float16,
         trust_remote_code=True,
         quantization_config=gptq_config,
-        device_map={"": 7}
+        device_map={"": 2}
     )
 
     print(f"Simulating requests for model at {quantized_model_path}")
@@ -48,9 +50,30 @@ async def main():
         latencies = [req["latency"] for req in results["successful_requests"]]
         all_latencies.append(latencies)
         all_successful_requests.append(results["successful_requests"])
-        model_names.append(Path(path).name)
+        model_name = Path(path).name
+        model_names.append(model_name)
 
-    plot_combined_metrics(all_latencies, all_successful_requests, model_names=model_names)
+        # Plot per-model accuracy curve
+        plot_accuracy_per_100_requests(
+            results["successful_requests"],
+            model_name=model_name,
+            save_path=f"accuracyper100_{model_name}.png"
+        )
+
+    # Plot combined latency and accuracy metrics
+    plot_combined_metrics(
+        all_latencies,
+        all_successful_requests,
+        model_names=model_names
+    )
+
+    # ✅ Plot combined accuracy for all models
+    plot_multiple_accuracies(
+        successful_requests_list=all_successful_requests,
+        model_names=model_names,
+        batch_size=100,
+        save_path="combined_accuracy_plot.png"
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())

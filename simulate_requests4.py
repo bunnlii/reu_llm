@@ -21,18 +21,25 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 
 
-orca_data = load_dataset("Open-Orca/OpenOrca", split="train")
+alpaca_data = load_dataset("tatsu-lab/alpaca", split="train")
 bertscore = evaluate.load("bertscore")
-bertscore_model = "microsoft/deberta-xlarge-mnli"
+bertscore_model = "roberta-large"
 
+request_id_map = {}
+
+def s_to_latency(s):
+    return 42_500*s 
 
 def get_prompt_and_reference():
-    item = orca_data[random.randint(0, len(orca_data) - 1)]
-    return item["question"], item["response"]
+    item = alpaca_data[random.randint(0, len(alpaca_data) - 1)]
+    instruction = item['instruction'].strip()
+    output = item['output'].strip()
+    prompt = f"Instruction: {instruction}\nAnswer:"
+    return prompt, output
 
 prompt_lengths = [128, 256, 512]
-max_batch_size = 8
-max_total_tokens_per_batch = 4096
+max_batch_size = 6
+max_total_tokens_per_batch = 2048
 
 def simulate_poisson_arrivals(rate_lambda, duration_sec):
     arrivals = []
@@ -54,7 +61,7 @@ def calculate_shannon_delay(bits, bandwidth_hz, tx_dbm, pathloss_gain=1e-3, nois
     capacity = bandwidth_hz * np.log2(1 + snr)
     return bits / capacity
 
-async def run_request(model, tokenizer, arrival_times, prompts, references, input_lens, gen_lens, required_accs, device, nodes):
+async def run_request(model, tokenizer, arrival_times, prompts, references, input_lens, gen_lens, required_accs, device, nodes, request_ids=None):
     raw_inputs = tokenizer(
         prompts,
         return_tensors="pt",
@@ -64,7 +71,8 @@ async def run_request(model, tokenizer, arrival_times, prompts, references, inpu
     )
     raw_inputs = {k: v.to(device) for k, v in raw_inputs.items()}
 
-    node = random.choice(nodes)
+    #node = random.choice(nodes)
+    node = nodes[1]
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
@@ -84,6 +92,7 @@ async def run_request(model, tokenizer, arrival_times, prompts, references, inpu
 
     if torch.cuda.is_available():
         torch.cuda.synchronize()
+    
     batch_end_time = time.time()
     real_latency = batch_end_time - batch_start_time
     total_tokens_batch = sum(input_lens[i] + gen_lens[i] for i in range(len(outputs)))
@@ -123,9 +132,8 @@ async def run_request(model, tokenizer, arrival_times, prompts, references, inpu
         )
         accuracy = bertscore_result["f1"][0]
 
-        #accuracy = 0
-
         results.append({
+            "id": request_ids[i] if request_ids else -1,
             "arrival_time": arrival_times[i],
             "input_length": input_lens[i],
             "generation_length": gen_lens[i],
@@ -137,7 +145,7 @@ async def run_request(model, tokenizer, arrival_times, prompts, references, inpu
             "latency": total_latency,
             "estimated_latency": estimated_latency,
             "real_latency": real_latency_i,
-            "node": node.name,
+            "node": node.name
         })
 
     return results
@@ -176,9 +184,14 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
     request_objects = []
     req_id = 0
 
+    start_e_time = time.time()
+
     for batch in batches:
         i = 0
         while i < len(batch):
+            
+            start_time = time.time()
+
             trimmed_batch = []
             token_sum = 0
             j = i
@@ -217,18 +230,27 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
                 i = j
                 continue
 
+            end_time = time.time()
+            batch_time = end_time - start_time
+            dropped_this_batch = 0
+            batch_indiv_time = 0.0
+
             for k, result in enumerate(batch_results):
-                print(f"=== Result {result_counter} ===")
-                print(f"Node: {result['node']}")
-                print(f"Latency: {result['latency']:.3f} seconds")
-                print(f"BERTScore Accuracy: {result['accuracy']:.3f}\n")
-                print("Prompt:")
-                print(batch_prompts[k].strip())
-                print("\nGenerated Response:")
-                print(result['generated_text'].strip())
-                print("\nReference Response:")
-                print(result['reference_text'].strip())
-                print("=" * 40)
+                batch_indiv_time += result["latency"]
+
+            for k, result in enumerate(batch_results):
+                print(f"Request {result_counter}: BERTScore Accuracy = {result['accuracy']:.3f}")
+                # print(f"=== Result {result_counter} ===")
+                # print(f"Node: {result['node']}")
+                # print(f"Latency: {result['latency']:.3f} seconds")
+                # print(f"BERTScore Accuracy: {result['accuracy']:.3f}\n")
+                # print("Prompt:")
+                # print(batch_prompts[k].strip())
+                # print("\nGenerated Response:")
+                # print(result['generated_text'].strip())
+                # print("\nReference Response:")
+                # print(result['reference_text'].strip())
+                # print("=" * 40)
 
                 estimated_latencies.append(result["latency"] ** 2)
 
@@ -236,40 +258,50 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
                     id=req_id,
                     prompt_length=result["input_length"],
                     output_length=result["generation_length"],
-                    latency=result["latency"],
-                    accuracy=result["accuracy"]
+                    latency=int(random.random() * 375_000 + 200_000),
+                    accuracy=result["accuracy"],
+                    time_taken = result["latency"]
                 )
+
+                # print(result["prompt_tokens"])
+                # print(result["input_length"], result["generation_length"], result["latency"], s_to_latency(result["latency"]), req.latency, result["accuracy"])
                 req_id += 1
                 request_objects.append(req)
 
-                if 0 <= result["latency"] <= 2.0:
+                print(batch_indiv_time, s_to_latency(batch_indiv_time), req.latency, s_to_latency(batch_indiv_time) <= req.latency)
+                if s_to_latency(batch_indiv_time) <= req.latency:
                     second = int(result["arrival_time"] + result["latency"])
                     completions_by_second[second] += 1
                     baseline_successful_requests.append(result)
                 else:
                     baseline_dropped_requests += 1
+                    dropped_this_batch += 1
 
                 result_counter += 1
 
-            baseline_dropped_requests += len(trimmed_batch) - len(batch_results)
+            # baseline_dropped_requests += len(trimmed_batch) - len(batch_results)
             i = j
 
+            print("Batch completed. Time: ", batch_time, " size: ", len(trimmed_batch), " dropped: ", dropped_this_batch)
+
     print(f"\nTotal requests: {len(arrivals)}")
-    print(f"Baseline (1.5s–2.0s deadline): {len(baseline_successful_requests)} success")
+    print(f"Baseline: {len(baseline_successful_requests)} success")
     print(f"Baseline dropped: {baseline_dropped_requests}")
-    print(f"Total simulation time: {time.time() - start_time:.2f} seconds")
+    print(f"Total simulation time: {time.time() - start_e_time:.2f} seconds")
 
     print("\nPreparing to evaluate optimized schedulers...")
 
     prompts_map = {i: p for i, p in enumerate(prompts)}
     references_map = {i: r for i, r in enumerate(references)}
 
-    # Assign unique IDs to requests (required for your algorithms)
     for i, req in enumerate(request_objects):
         req.id = i
+    with open("requests.txt", "w") as f:
+        for req in request_objects:
+            f.write(repr(req) + "\n")
 
-    opt_dropped = await evaluate_scheduler("OPT_SOL", opt_sol, request_objects, prompts_map, references_map, model, tokenizer, nodes, device)
     paper_dropped = await evaluate_scheduler("PAPER_1_SOL", paper_1_sol, request_objects, prompts_map, references_map, model, tokenizer, nodes, device)
+    opt_dropped = await evaluate_scheduler("OPT_SOL", opt_sol, request_objects, prompts_map, references_map, model, tokenizer, nodes, device)
 
     labels = ['Baseline', 'OPT_SOL', 'PAPER_1_SOL']
     dropped_counts = [baseline_dropped_requests, opt_dropped, paper_dropped]
@@ -280,7 +312,9 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
     plt.title("Dropped Requests by Scheduler")
     plt.grid(True, axis='y', linestyle='--', alpha=0.6)
     plt.tight_layout()
-    plt.show()
+    plt.savefig('multiple_algos.png')
+    # plt.show()
+    # plt.save
 
     return {
         "arrivals": arrivals,
@@ -296,24 +330,23 @@ async def evaluate_scheduler(name, scheduler_fn, requests, prompts, references, 
     print(f"\nEvaluating: {name}")
     scheduled_reqs = scheduler_fn(requests.copy())
 
+    if scheduled_reqs is None:
+        print(f"{name} — Scheduler returned None.")
+        return len(requests)
+
+    ttime = 0.0
     successful = 0
     dropped = 0
     batched = []
-    batch = []
-    batch_token_sum = 0
+    batches = {}
 
     for req in scheduled_reqs:
-        total_tokens = req.prompt_length + req.output_length
-        if len(batch) >= max_batch_size or batch_token_sum + total_tokens > max_total_tokens_per_batch:
-            batched.append(batch)
-            batch = []
-            batch_token_sum = 0
-        batch.append(req)
-        batch_token_sum += total_tokens
-    if batch:
-        batched.append(batch)
+        request_id_map[req.id] = req
+        epoch_id = req.epoch
+        batches.setdefault(epoch_id, []).append(req)
 
-    request_id_map = {r.id: r for r in requests}
+    for epoch_id in batches:
+        batched.append(batches[epoch_id])
 
     for batch in batched:
         prompts_batch = [prompts[r.id] for r in batch]
@@ -321,26 +354,29 @@ async def evaluate_scheduler(name, scheduler_fn, requests, prompts, references, 
         input_lens = [r.prompt_length for r in batch]
         output_lens = [r.output_length for r in batch]
         required_accs = [r.accuracy for r in batch]
-        #arrival_times = [r.creation_time for r in batch]
+        arrival_times = [r.creation_time for r in batch]
+        request_ids = [r.id for r in batch]
 
         try:
             results = await run_request(
                 model, tokenizer,
                 arrival_times, prompts_batch, references_batch,
                 input_lens, output_lens, required_accs,
-                device, nodes
+                device, nodes, request_ids
             )
         except Exception as e:
-            print(f"Batch failed under {name}: {e}")
             dropped += len(batch)
             continue
 
         for r in results:
-            if r["latency"] <= 2.0:
+            ttime += r["latency"]
+            if s_to_latency(r["latency"]) <= request_id_map[r["id"]].latency:
                 successful += 1
             else:
                 dropped += 1
 
-    print(f"{name} — Total Scheduled: {len(scheduled_reqs)}, Dropped: {dropped}, Success: {successful}")
+    total = len(scheduled_reqs)
+    accuracy = successful / total if total > 0 else 0.0
+    print(f"{name} — Accuracy: {accuracy * 100:.2f}% ({successful}/{total})")
     return dropped
 

@@ -15,7 +15,7 @@ from simulation_env import create_nodes
 #orca_data = load_dataset("Open-Orca/OpenOrca", split="train")
 alpaca_data = load_dataset("tatsu-lab/alpaca", split="train")
 bertscore = evaluate.load("bertscore")
-bertscore_model = "microsoft/deberta-xlarge-mnli"
+bertscore_model = "roberta-large"
 
 # THIS IS FOR ORCA DATASET
 # def get_prompt_and_reference():
@@ -74,7 +74,7 @@ async def run_request(model, tokenizer, arrival_times, prompts, references, inpu
         outputs = model.generate(
             **raw_inputs,
             max_new_tokens=max(gen_lens),
-            do_sample=False,
+            do_sample=True,
             temperature=0.7,
             top_p=0.9,
             pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,

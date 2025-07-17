@@ -1,4 +1,3 @@
-
 if __name__ == "__main__":
     from utils import *
 
@@ -77,7 +76,7 @@ class AVLTree:
     def _insert(self, node, key):
         if not node:
             return AVLNode(key)
-        if key.output_length < node.key.output_length:
+        if key.get_bandwidth() < node.key.get_bandwidth():
             node.left = self._insert(node.left, key)
         else:
             node.right = self._insert(node.right, key)
@@ -95,18 +94,10 @@ class AVLTree:
     def _get_less_than(self, node, x):
         if not node:
             return []
-        if x <= node.key.output_length:
+        if x <= node.key.get_bandwidth():
             return self._get_less_than(node.left, x)
         else:
             return self._get_less_than(node.left, x) + [node.key] + self._get_less_than(node.right, x)
-
-    def _get_output_sum(self, node, x):
-        if not node:
-            return 0
-        if x <= node.key.output_length:
-            return self._get_output_sum(node.left, x)
-        else:
-            return node.key.output_length + self._output_sum(node.left) + self._get_output_sum(node.right, x)
     
     def _get_bandwidth_sum(self, node, x):
         if not node:
@@ -117,4 +108,3 @@ class AVLTree:
             return node.key.get_bandwidth() + \
                    self._bandwidth_sum(node.left) + \
                    self._get_bandwidth_sum(node.right, x)
-

@@ -17,8 +17,9 @@ def quantize_model(model_id, save_dir, bits=4, group_size=128):
     print("Preparing examples for quantization")
     examples = []
     for i in range(4096):
-        #prompt = orca_data[i]["question"]
-        prompt = alpaca_data[i]["instruction"]
+        instruction = alpaca_data[i]["instruction"].strip()
+        input_text = alpaca_data[i]["input"].strip() if "input" in alpaca_data[i] else ""
+        prompt = f"### Instruction:\n{instruction}\n\n### Input:\n{input_text}\n\n### Response:\n"
         inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=128, padding="max_length")
         inputs = {k: v for k, v in inputs.items()}
         examples.append(inputs)
@@ -45,8 +46,8 @@ if __name__ == "__main__":
     #quantize_model("bigscience/bloom-3b", "./quantized_bloom_3b", bits=8, group_size=128)
 
     # BLOOM-7.1B
-    quantize_model("bigscience/bloom-7b1", "./quantized_bloom_7b1", bits=8, group_size=128)
+    #quantize_model("bigscience/bloom-7b1", "./quantized_bloom_7b1", bits=8, group_size=128)
 
     # OPT-13B
-    #quantize_model("facebook/opt-13b", "./quantized_opt_13b", bits=8, group_size=128)
+    quantize_model("facebook/opt-13b", "./quantized_opt_13b", bits=8, group_size=128)
 

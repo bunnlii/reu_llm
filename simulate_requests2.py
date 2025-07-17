@@ -6,6 +6,7 @@ import asyncio
 import matplotlib.pyplot as plt
 import evaluate
 
+from utils import Request
 from math import floor
 from collections import defaultdict
 from transformers import AutoTokenizer, AutoModelForCausalLM, GPTQConfig
@@ -15,8 +16,7 @@ from simulation_env import create_nodes
 #orca_data = load_dataset("Open-Orca/OpenOrca", split="train")
 alpaca_data = load_dataset("tatsu-lab/alpaca", split="train")
 bertscore = evaluate.load("bertscore")
-#bertscore_model = "microsoft/deberta-xlarge-mnli"
-bertscore_model = "microsoft/deberta-v3-large"
+bertscore_model = "roberta-large"
 
 # THIS IS FOR ORCA DATASET
 # def get_prompt_and_reference():
@@ -24,18 +24,34 @@ bertscore_model = "microsoft/deberta-v3-large"
 #     prompt = f"Instruction: Answer the following question clearly.\nQuestion: {item['question']}\nAnswer:"
 #     return prompt, item["response"]
 
-def get_prompt_and_reference(tokenizer, max_allowed_lengths=[128, 256, 512]):
-    while True:
-        item = alpaca_data[random.randint(0, len(alpaca_data) - 1)]
-        instruction = item['instruction'].strip()
-        output = item['output'].strip()
-        prompt = f"Instruction: {instruction}\nAnswer:"
+def is_valid(requests):
+    t_min = min(req.latency for req in requests)
+    tau_min = t_min
+    total_bandwidth = 0
+    for req in requests:
+        total_bandwidth += req.get_bandwidth()
+        if total_bandwidth > tau_min:
+            return 0
+    return total_bandwidth
 
-        tokenized = tokenizer(prompt, return_tensors="pt")
-        prompt_len = len(tokenized["input_ids"][0])
+# O(n^3 log n) algorithm from paper
+def paper_1_sol(reqs):
+    reqs.sort(key=lambda x: x.latency, reverse=True)
+    for z in range(len(reqs), 0, -1):
+        for d in range(z, len(reqs) + 1):
+            f_d = reqs[:d]
+            f_d.sort(key=lambda x: x.output_length, reverse=True)
+            s = f_d[:z]
+            bandwidth = is_valid(s)
+            if bandwidth:
+                return s
 
-        if prompt_len in max_allowed_lengths:
-            return prompt, output, prompt_len
+def get_prompt_and_reference():
+    item = alpaca_data[random.randint(0, len(alpaca_data) - 1)]
+    instruction = item['instruction'].strip()
+    output = item['output'].strip()
+    prompt = f"Instruction: {instruction}\nAnswer:"
+    return prompt, output
 
 prompt_lengths = [128, 256, 512]
 max_batch_size = 8
@@ -61,6 +77,21 @@ def calculate_shannon_delay(bits, bandwidth_hz, tx_dbm, pathloss_gain=1e-3, nois
     capacity = bandwidth_hz * np.log2(1 + snr)
     return bits / capacity
 
+
+def estimate_latency(prompt_len, output_len):
+    total_tokens = prompt_len + output_len
+    min_tokens = 256  # 128+128 minimum tokens
+    max_tokens = 1024  # 512+512 max tokens
+    min_latency = 1.5
+    max_latency = 2.0
+    
+    # Clip tokens within range
+    clipped_tokens = max(min_tokens, min(total_tokens, max_tokens))
+    
+    # Linear interpolation between min_latency and max_latency
+    latency = min_latency + (clipped_tokens - min_tokens) * (max_latency - min_latency) / (max_tokens - min_tokens)
+    return latency
+
 async def run_request(model, tokenizer, arrival_times, prompts, references, input_lens, gen_lens, required_accs, device, nodes):
     raw_inputs = tokenizer(
         prompts,
@@ -81,7 +112,7 @@ async def run_request(model, tokenizer, arrival_times, prompts, references, inpu
         outputs = model.generate(
             **raw_inputs,
             max_new_tokens=max(gen_lens),
-            do_sample=False,
+            do_sample=True,
             temperature=0.7,
             top_p=0.9,
             pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
@@ -126,7 +157,7 @@ async def run_request(model, tokenizer, arrival_times, prompts, references, inpu
             references=[reference_text],
             lang="en",
             model_type=bertscore_model,
-            rescale_with_baseline=True
+            rescale_with_baseline=False
         )
         accuracy = bertscore_result["f1"][0]
         # accuracy = 0 
@@ -169,93 +200,86 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
     completions_by_second = defaultdict(int)
     estimated_latencies = [] 
 
-    prompts = []
-    references = []
-    input_lens = []
-    gen_lens = []
-    required_accs = []
+    input_lens = [random.choice(prompt_lengths) for _ in arrivals]
+    gen_lens = [random.choice(prompt_lengths) for _ in arrivals]
+    required_accs = [random.uniform(0, 1) for _ in arrivals]
 
-    for _ in arrivals:
-        prompt, reference, prompt_len = get_prompt_and_reference(tokenizer, max_allowed_lengths=prompt_lengths)
-    
-        prompts.append(prompt)
-        references.append(reference)
-        input_lens.append(prompt_len)
-        gen_lens.append(random.choice(prompt_lengths))  # generation length can still be random
-        required_accs.append(random.uniform(0, 1))
+    prompt_refs = [get_prompt_and_reference() for _ in arrivals]
+    prompts = [p for p, r in prompt_refs]
+    references = [r for p, r in prompt_refs]
 
     batches = group_by_epoch(arrivals, input_lens, gen_lens, prompts, required_accs, references)
     result_counter = 1
 
+
     for batch in batches:
-        i = 0
-        while i < len(batch):
-            trimmed_batch = []
-            token_sum = 0
-            j = i
-            while j < len(batch):
-                in_len, gen_len = batch[j][2], batch[j][3]
-                if len(trimmed_batch) >= max_batch_size:
-                    break
-                if token_sum + in_len + gen_len > max_total_tokens_per_batch:
-                    break
-                trimmed_batch.append(batch[j])
-                token_sum += in_len + gen_len
-                j += 1
+        # Wrap items as Request objects for paper_1_sol
+        request_objs = [
+            Request(
+                id=k,
+                prompt_length=item[2],         # input_length
+                output_length=item[3],         # generation_length
+                latency=estimate_latency(item[2], item[3]),  
+                accuracy=0,
+                required_accuracy=item[4],
+                prompt=item[1],
+                reference=item[5],
+                arrival_time=item[0],          # arrival_time
+                input_length=item[2]           # input_length again, if needed separately
+            )
+            for k, item in enumerate(batch)
+        ]
 
-            if not trimmed_batch:
-                i += 1
-                continue
+        selected = paper_1_sol(request_objs)
+        if not selected:
+            continue
 
-            batch_arrival_times = [item[0] for item in trimmed_batch]
-            batch_prompts = [item[1] for item in trimmed_batch]
-            batch_input_lens = [item[2] for item in trimmed_batch]
-            batch_gen_lens = [item[3] for item in trimmed_batch]
-            batch_required_accs = [item[4] for item in trimmed_batch]
-            batch_references = [item[5] for item in trimmed_batch]
+        # Extract selected requests back into batch format
+        batch_arrival_times = [req.arrival_time for req in selected]
+        batch_prompts = [req.prompt for req in selected]
+        batch_input_lens = [req.input_length for req in selected]
+        batch_gen_lens = [req.output_length for req in selected]
+        batch_required_accs = [req.required_accuracy for req in selected]
+        batch_references = [req.reference for req in selected]
 
-            try:
-                batch_results = await run_request(
-                    model, tokenizer,
-                    batch_arrival_times, batch_prompts, batch_references,
-                    batch_input_lens, batch_gen_lens,
-                    batch_required_accs,
-                    device, nodes
-                )
-            except Exception as e:
-                print(f"Batch failed: {e}")
-                dropped_requests += len(trimmed_batch)
-                i = j
-                continue
+        try:
+            batch_results = await run_request(
+                model, tokenizer,
+                batch_arrival_times, batch_prompts, batch_references,
+                batch_input_lens, batch_gen_lens,
+                batch_required_accs,
+                device, nodes
+            )
+        except Exception as e:
+            print(f"Batch failed: {e}")
+            dropped_requests += len(selected)
+            continue
 
-            for k, result in enumerate(batch_results):
-                print(f"=== Result {result_counter} ===")
-                print(f"Node: {result['node']}")
-                print(f"Latency: {result['latency']:.3f} seconds")
-                print(f"BERTScore Accuracy: {result['accuracy']:.3f}\n")
+        for k, result in enumerate(batch_results):
+            print(f"=== Result {result_counter} ===")
+            print(f"Node: {result['node']}")
+            print(f"Latency: {result['latency']:.3f} seconds")
+            print(f"BERTScore Accuracy: {result['accuracy']:.3f}\n")
 
-                print("Prompt:")
-                print(batch_prompts[k].strip())
-                print("\nGenerated Response:")
-                print(result['generated_text'].strip())
-                print("\nReference Response:")
-                print(result['reference_text'].strip())
+            print("Prompt:")
+            print(batch_prompts[k].strip())
+            print("\nGenerated Response:")
+            print(result['generated_text'].strip())
+            print("\nReference Response:")
+            print(result['reference_text'].strip())
 
-                print("=" * 40)
+            print("=" * 40)
 
-                estimated_latencies.append(result["latency"] ** 2)
+            estimated_latencies.append(result["latency"] ** 2)
 
-                if 0 <= result["latency"] <= 2.0:
-                    second = int(result["arrival_time"] + result["latency"])
-                    completions_by_second[second] += 1  
-                    successful_requests.append(result)
-                else:
-                    dropped_requests += 1
+            if 0 <= result["latency"] <= 2.0:
+                second = int(result["arrival_time"] + result["latency"])
+                completions_by_second[second] += 1
+                successful_requests.append(result)
+            else:
+                dropped_requests += 1
 
-                result_counter += 1
-
-            dropped_requests += len(trimmed_batch) - len(batch_results)
-            i = j
+            result_counter += 1
 
     print(f"\nTotal requests: {len(arrivals)}")
     print(f"Successful (1.5s–2.0s deadline): {len(successful_requests)}")
@@ -271,4 +295,5 @@ async def simulate_requests(rate_lambda, duration_sec, model, tokenizer):
         "successful_requests": successful_requests,
         "estimated_latencies": estimated_latencies
     }
+
 
